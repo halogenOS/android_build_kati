@@ -44,7 +44,7 @@ cc_library_host_static {
         "var.cc",
         "version_unknown.cc",
     ],
-    cflags: ["-W", "-Wall", "-DNOLOG"],
+    cflags: ["-W", "-Wall", "-O3", "-DNOLOG"],
 }
 
 cc_binary_host {
@@ -53,7 +53,7 @@ cc_binary_host {
         "main.cc",
     ],
     whole_static_libs: ["libckati"],
-    cflags: ["-W", "-Wall", "-DNOLOG"],
+    cflags: ["-W", "-Wall", "-O3", "-DNOLOG"],
     target: {
         linux: {
             host_ldlibs: ["-lrt", "-lpthread"],
