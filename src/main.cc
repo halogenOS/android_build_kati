@@ -124,8 +124,20 @@ class SegfaultHandler {
  private:
   static SegfaultHandler* global_handler;
 
+  // Writes as much of s as stderr accepts. The process is about to die, so
+  // there is nobody to report a failed write to.
   void dumpstr(const char* s) const {
-    (void)write(STDERR_FILENO, s, strlen(s));
+    for (size_t left = strlen(s); left > 0;) {
+      ssize_t written = write(STDERR_FILENO, s, left);
+      if (written < 0 && errno == EINTR) {
+        continue;
+      }
+      if (written <= 0) {
+        return;
+      }
+      s += written;
+      left -= written;
+    }
   }
   void dumpint(int i) const {
     char buf[11];

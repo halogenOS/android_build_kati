@@ -71,7 +71,8 @@ KATI_CXX_TEST_EXES := $(patsubst $(KATI_INTERMEDIATES_PATH)/%.o,$(KATI_BIN_PATH)
 
 KATI_CXXFLAGS := -g -W -Wall -MMD -MP
 KATI_CXXFLAGS += -O -DNOLOG
-KATI_CXXFLAGS += -march=native
+KATI_ARCH_FLAGS ?= -march=native
+KATI_CXXFLAGS += $(KATI_ARCH_FLAGS)
 #KATI_CXXFLAGS += -pg
 
 ifeq ($(shell uname),Linux)
@@ -100,9 +101,11 @@ $(KATI_CXX_TEST_EXES): $(filter-out $(KATI_INTERMEDIATES_PATH)/main.o,$(KATI_CXX
 $(KATI_CXX_TEST_EXES): $(KATI_BIN_PATH)/%: $(KATI_INTERMEDIATES_PATH)/%.o
 	$(KATI_LD) $^ -o $@ $(KATI_LIBS)
 
-# Rule to generate version.cc
-KATI_GIT_DIR := $(shell cd $(KATI_SRC_PATH); realpath `git rev-parse --git-dir`)
+# Rule to generate version.cc. A build outside a git checkout passes
+# KATI_VERSION.
 KATI_VERSION_DEPS :=
+ifndef KATI_VERSION
+KATI_GIT_DIR := $(shell cd $(KATI_SRC_PATH); realpath `git rev-parse --git-dir`)
 ifneq ($(KATI_GIT_DIR),)
 KATI_VERSION_DEPS := $(wildcard $(KATI_GIT_DIR)/HEAD $(KATI_GIT_DIR)/index)
 endif
@@ -110,6 +113,7 @@ ifneq ($(KATI_VERSION_DEPS),)
 KATI_VERSION := $(shell git -C $(KATI_GIT_DIR) rev-parse HEAD)
 else
 KATI_VERSION := unknown
+endif
 endif
 $(KATI_INTERMEDIATES_PATH)/version.cc: $(KATI_VERSION_DEPS)
 	@mkdir -p $(dir $@)

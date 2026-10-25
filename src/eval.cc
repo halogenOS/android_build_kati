@@ -22,6 +22,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <algorithm>
+
 #include "expr.h"
 #include "file.h"
 #include "file_cache.h"

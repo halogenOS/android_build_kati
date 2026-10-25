@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <sys/wait.h>
 
+#include <cstdint>
 #include <memory>
 #include <string_view>
 #include <unordered_map>
