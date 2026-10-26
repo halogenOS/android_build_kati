@@ -44,6 +44,9 @@ enum struct CommandOp {
   READ_MISSING,
   WRITE,
   APPEND,
+  // A file that the run writes and the regeneration check only requires to
+  // exist.
+  OUTPUT,
 };
 
 struct CommandResult {

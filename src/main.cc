@@ -29,6 +29,7 @@
 #include "exec.h"
 #include "file.h"
 #include "file_cache.h"
+#include "file_stream.h"
 #include "fileutil.h"
 #include "find.h"
 #include "flags.h"
@@ -45,6 +46,7 @@
 #include "symtab.h"
 #include "timeutil.h"
 #include "var.h"
+#include "version.h"
 
 // We know that there are leaks in Kati. Turn off LeakSanitizer by default.
 extern "C" const char* __asan_default_options() {
@@ -286,6 +288,7 @@ static int Run(const std::vector<Symbol>& targets,
       stmt->Eval(&ev);
     }
   }
+  FinishFileStreams();
 
   for (ParseErrorStmt* err : GetParseErrors()) {
     WARN_LOC(err->loc(), "warning for parse error in an unevaluated line: %s",
@@ -370,6 +373,11 @@ int main(int argc, char* argv[]) {
   if (argc >= 2) {
     if (!strcmp(argv[1], "--realpath")) {
       HandleRealpath(argc - 2, argv + 2);
+      return 0;
+    } else if (!strcmp(argv[1], "--version")) {
+      // Each suffix marks one capability, which soong_ui checks before it runs
+      // this Kati.
+      printf("kati %s+json-lines\n", kGitVersion);
       return 0;
     } else if (!strcmp(argv[1], "--dump_stamp_tool")) {
       // Unfortunately, this can easily be confused with --dump_kati_stamp,

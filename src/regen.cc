@@ -377,6 +377,20 @@ class StampChecker {
       return false;
     }
 
+    if (sr->op == CommandOp::OUTPUT) {
+      if (!Exists(sr->cmd)) {
+        if (g_flags.dump_kati_stamp)
+          printf("file %s: dirty (missing output)\n", sr->cmd.c_str());
+        else
+          *err =
+              StringPrintf("%s is missing, regenerating...\n", sr->cmd.c_str());
+        return true;
+      }
+      if (g_flags.dump_kati_stamp)
+        printf("file %s: clean (output)\n", sr->cmd.c_str());
+      return false;
+    }
+
     if (sr->op == CommandOp::WRITE || sr->op == CommandOp::APPEND) {
       FILE* f =
           fopen(sr->cmd.c_str(), (sr->op == CommandOp::WRITE) ? "wb" : "ab");

@@ -30,11 +30,13 @@ KATI_CXX_SRCS := \
 	expr.cc \
 	file.cc \
 	file_cache.cc \
+	file_stream.cc \
 	fileutil.cc \
 	find.cc \
 	flags.cc \
 	func.cc \
 	io.cc \
+	json_quote.cc \
 	log.cc \
 	main.cc \
 	ninja.cc \

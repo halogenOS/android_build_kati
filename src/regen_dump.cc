@@ -208,6 +208,8 @@ int stamp_dump_main(int argc, char* argv[]) {
         printf("cmd type: WRITE\n");
       } else if (op == CommandOp::APPEND) {
         printf("cmd type: APPEND\n");
+      } else if (op == CommandOp::OUTPUT) {
+        printf("cmd type: OUTPUT\n");
       }
       printf("  loc: %s:%d\n", file.c_str(), line);
       printf("  cmd: %s\n", cmd.c_str());

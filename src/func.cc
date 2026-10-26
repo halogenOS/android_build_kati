@@ -32,8 +32,10 @@
 
 #include "eval.h"
 #include "file_cache.h"
+#include "file_stream.h"
 #include "fileutil.h"
 #include "find.h"
+#include "json_quote.h"
 #include "loc.h"
 #include "log.h"
 #include "parser.h"
@@ -1138,6 +1140,36 @@ void ExtraFileDepsFunc(const std::vector<Value*>& args,
   }
 }
 
+void JsonQuoteFunc(const std::vector<Value*>& args,
+                   Evaluator* ev,
+                   std::string* s) {
+  AppendQuotedJsonString(args[0]->Eval(ev), s);
+}
+
+void FileStreamFunc(const std::vector<Value*>& args,
+                    Evaluator* ev,
+                    std::string*) {
+  if (ev->avoid_io()) {
+    ev->Error("*** $(KATI_file_stream ...) is not supported in rules.");
+  }
+
+  std::string arg = args[0]->Eval(ev);
+  std::string path(TrimSpace(arg));
+  if (path.empty()) {
+    ev->Error("*** Missing filename");
+  }
+  std::string line = args[1]->Eval(ev);
+
+  if (StartFileStream(ev, path) && ShouldStoreCommandResult(path)) {
+    CommandResult* cr = new CommandResult();
+    cr->op = CommandOp::OUTPUT;
+    cr->cmd = path;
+    cr->loc = ev->loc();
+    g_command_results.push_back(cr);
+  }
+  AppendToFileStream(ev, path, line);
+}
+
 #define ENTRY(name, args...) \
   {                          \
     name, {                  \
@@ -1204,6 +1236,8 @@ static const std::unordered_map<std::string_view, FuncInfo> g_func_info_map = {
     ENTRY("KATI_foreach_sep", &ForeachWithSepFunc, 4, 4, false, false),
     ENTRY("KATI_file_no_rerun", &FileFuncNoRerun, 2, 1, false, false),
     ENTRY("KATI_visibility_prefix", &VarVisibilityFunc, 2, 1, false, false),
+    ENTRY("KATI_json_quote", &JsonQuoteFunc, 1, 1, false, false),
+    ENTRY("KATI_file_stream", &FileStreamFunc, 2, 2, false, false),
 };
 
 }  // namespace
