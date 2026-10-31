@@ -17,8 +17,10 @@
 
 #include <time.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 #include "dep.h"
@@ -34,8 +36,23 @@ std::string GetNinjaFilename();
 std::string GetNinjaShellScriptFilename();
 std::string GetNinjaStampFilename();
 
+// A compile command that writes a depfile Kati cannot find.
+struct DepfileError {
+  enum class Cause {
+    // The command has neither -MF nor -o.
+    kNoDepfileName,
+    // The command makes a .P file but does not remove the .d file.
+    kNoDepfileRemoval,
+  };
+  Cause cause;
+  std::string command;
+};
+
 // Exposed only for test.
-bool GetDepfileFromCommand(std::string* cmd, std::string* out);
+// Returns the depfile |cmd| writes, nothing when it writes none, or why it
+// cannot be found. May change |cmd| so that the depfile is left for Ninja.
+std::variant<std::optional<std::string>, DepfileError> GetDepfileFromCommand(
+    std::string* cmd);
 size_t GetGomaccPosForAndroidCompileCommand(std::string_view cmdline);
 
 #endif  // NINJA_H_

@@ -25,20 +25,20 @@ namespace {
 
 std::string GetDepfile(std::string cmd, std::string* new_cmd) {
   new_cmd->clear();
-  std::string r;
-  if (GetDepfileFromCommand(&cmd, &r)) {
+  const std::optional<std::string> depfile =
+      std::get<std::optional<std::string>>(GetDepfileFromCommand(&cmd));
+  if (depfile) {
     *new_cmd = cmd;
-    return r;
+    return *depfile;
   }
   return "";
 }
 
 void TestGetDepfile() {
   std::string new_cmd;
-  ASSERT_EQ(GetDepfile("g++ -c fat.cc -MD ", &new_cmd), "");
-  assert(g_last_error);
-  delete g_last_error;
-  g_last_error = NULL;
+  std::string no_output_cmd = "g++ -c fat.cc -MD ";
+  assert(std::holds_alternative<DepfileError>(
+      GetDepfileFromCommand(&no_output_cmd)));
 
   // clang-format off
   ASSERT_EQ(GetDepfile("g++ -c fat.cc -o fat.o", &new_cmd), "");

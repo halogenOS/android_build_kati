@@ -34,10 +34,18 @@ double GetTime() {
 #endif
 }
 
-ScopedTimeReporter::ScopedTimeReporter(const char* name)
-    : name_(name), start_(GetTime()) {}
+ScopedTimeReporter::ScopedTimeReporter(const char* name) : name_(name) {}
 
 ScopedTimeReporter::~ScopedTimeReporter() {
-  double elapsed = GetTime() - start_;
+  double elapsed = 0;
+  timer_.Lap(&elapsed);
   LOG_STAT("%s: %f", name_, elapsed);
+}
+
+StepTimer::StepTimer() : last_(std::chrono::steady_clock::now()) {}
+
+void StepTimer::Lap(double* seconds) {
+  const auto now = std::chrono::steady_clock::now();
+  *seconds += std::chrono::duration<double>(now - last_).count();
+  last_ = now;
 }

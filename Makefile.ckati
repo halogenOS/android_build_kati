@@ -49,6 +49,7 @@ KATI_CXX_SRCS := \
 	stringprintf.cc \
 	strutil.cc \
 	symtab.cc \
+	thread_pool.cc \
 	timeutil.cc \
 	var.cc
 
@@ -72,7 +73,7 @@ KATI_CXX_TEST_EXES := $(patsubst $(KATI_INTERMEDIATES_PATH)/%.o,$(KATI_BIN_PATH)
 	$(KATI_CXX_TEST_OBJS))
 
 KATI_CXXFLAGS := -g -W -Wall -MMD -MP
-KATI_CXXFLAGS += -O -DNOLOG
+KATI_CXXFLAGS += -O3 -DNOLOG
 KATI_ARCH_FLAGS ?= -march=native
 KATI_CXXFLAGS += $(KATI_ARCH_FLAGS)
 #KATI_CXXFLAGS += -pg

@@ -15,13 +15,47 @@
 #ifndef SYMTAB_H_
 #define SYMTAB_H_
 
+#include <atomic>
 #include <bitset>
 #include <functional>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
 
-extern std::vector<std::string*>* g_symbols;
+// The names of the symbols, indexed by symbol value. Appending moves no name,
+// so threads other than the one that calls Intern() read the names of symbols
+// handed to them without a lock.
+class SymbolNames {
+ public:
+  const std::string& operator[](size_t i) const {
+    const int segment = SegmentOf(i);
+    const std::string* names =
+        segments_[segment].load(std::memory_order_acquire);
+    return names[i - SegmentStart(segment)];
+  }
+
+  // Only the thread that calls Intern() appends.
+  const std::string& Append(std::string_view name);
+
+  size_t size() const { return size_; }
+
+ private:
+  // Segment k holds the 2^k names from index 2^k - 1 on, so the table grows
+  // like a vector without moving what it holds.
+  static int SegmentOf(size_t i) {
+    return std::numeric_limits<unsigned long long>::digits - 1 -
+           __builtin_clzll(i + 1);
+  }
+  static size_t SegmentStart(int segment) { return (size_t{1} << segment) - 1; }
+
+  // Never freed, as other threads may still read names while exit() runs the
+  // static destructors.
+  std::atomic<std::string*> segments_[std::numeric_limits<size_t>::digits] = {};
+  size_t size_ = 0;
+};
+
+extern SymbolNames g_symbol_names;
 
 class Symtab;
 class Var;
@@ -30,7 +64,7 @@ class Symbol {
  public:
   explicit Symbol() : v_(-1) {}
 
-  const std::string& str() const { return *((*g_symbols)[v_]); }
+  const std::string& str() const { return g_symbol_names[v_]; }
 
   const char* c_str() const { return str().c_str(); }
 

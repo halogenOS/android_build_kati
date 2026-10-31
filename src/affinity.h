@@ -15,7 +15,33 @@
 #ifndef AFFINITY_H_
 #define AFFINITY_H_
 
+#ifdef __linux__
+#include <sched.h>
+#endif
+
+// The number of CPUs the process was started on.
+int StartCpuCount();
+
+// Lets the calling thread, and every process it starts from then on, run on
+// the CPUs the process was started on.
+void SetStartAffinity();
+
 void SetAffinityForSingleThread();
-void SetAffinityForMultiThread();
+
+// Lets the calling thread, and every process it starts, run on the CPUs the
+// process was started on while this object lives.
+class ScopedStartAffinity {
+ public:
+  ScopedStartAffinity();
+  ~ScopedStartAffinity();
+  ScopedStartAffinity(const ScopedStartAffinity&) = delete;
+  ScopedStartAffinity& operator=(const ScopedStartAffinity&) = delete;
+
+#ifdef __linux__
+ private:
+  cpu_set_t previous_;
+  bool saved_;
+#endif
+};
 
 #endif

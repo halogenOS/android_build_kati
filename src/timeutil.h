@@ -15,7 +15,22 @@
 #ifndef TIMEUTIL_H_
 #define TIMEUTIL_H_
 
+#include <chrono>
+
 double GetTime();
+
+// Sums the durations of consecutive steps, measured on a monotonic clock.
+class StepTimer {
+ public:
+  StepTimer();
+
+  // Adds the time since the previous call, or since construction, to
+  // |*seconds|.
+  void Lap(double* seconds);
+
+ private:
+  std::chrono::steady_clock::time_point last_;
+};
 
 struct ScopedTimeReporter {
  public:
@@ -24,7 +39,7 @@ struct ScopedTimeReporter {
 
  private:
   const char* name_;
-  double start_;
+  StepTimer timer_;
 };
 
 #endif  // TIME_H_

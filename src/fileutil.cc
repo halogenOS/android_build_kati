@@ -32,6 +32,7 @@
 
 #include <unordered_map>
 
+#include "affinity.h"
 #include "log.h"
 #include "strutil.h"
 
@@ -137,8 +138,11 @@ int RunCommand(const std::string& shell,
   }
 
   pid_t pid;
-  err = posix_spawn(&pid, argv[0], &action, &attr, const_cast<char**>(argv),
-                    environ);
+  {
+    ScopedStartAffinity child_cpus;
+    err = posix_spawn(&pid, argv[0], &action, &attr, const_cast<char**>(argv),
+                      environ);
+  }
   if (err != 0) {
     ERROR("posix_spawn: %s", strerror(err));
   }

@@ -14,15 +14,11 @@
 
 // +build ignore
 
-// #define ENABLE_TID_CHECK
-
 #include "symtab.h"
 
-#ifdef ENABLE_TID_CHECK
-#include <pthread.h>
-#endif
 #include <string.h>
 
+#include <thread>
 #include <unordered_map>
 
 #include "log.h"
@@ -35,7 +31,7 @@ struct SymbolData {
   Var* gv;
 };
 
-std::vector<std::string*>* g_symbols;
+SymbolNames g_symbol_names;
 static std::vector<SymbolData> g_symbol_data;
 
 Symbol kEmptySym;
@@ -106,16 +102,22 @@ ScopedGlobalVar::~ScopedGlobalVar() {
   g_symbol_data[name_.val()].gv = orig_;
 }
 
+const std::string& SymbolNames::Append(std::string_view name) {
+  const int segment = SegmentOf(size_);
+  std::string* names = segments_[segment].load(std::memory_order_relaxed);
+  if (!names) {
+    names = new std::string[size_t{1} << segment];
+    segments_[segment].store(names, std::memory_order_release);
+  }
+  std::string& slot = names[size_ - SegmentStart(segment)];
+  slot = name;
+  size_++;
+  return slot;
+}
+
 class Symtab {
  public:
   Symtab() {
-#ifdef ENABLE_TID_CHECK
-    tid_ = pthread_self();
-#endif
-
-    CHECK(g_symbols == NULL);
-    g_symbols = &symbols_;
-
     Symbol s = InternImpl("");
     CHECK(s.v_ == 0);
     CHECK(Intern("") == s);
@@ -141,30 +143,22 @@ class Symtab {
                                  false, nullptr);
   }
 
-  ~Symtab() {
-    LOG_STAT("%zu symbols", symbols_.size());
-    for (std::string* s : symbols_)
-      delete s;
-  }
+  ~Symtab() { LOG_STAT("%zu symbols", g_symbol_names.size()); }
 
   Symbol InternImpl(std::string_view s) {
     auto found = symtab_.find(s);
     if (found != symtab_.end()) {
       return found->second;
     }
-    symbols_.push_back(new std::string(s.data(), s.size()));
     Symbol sym = Symbol(symtab_.size());
-    bool ok = symtab_.emplace(*symbols_.back(), sym).second;
+    bool ok = symtab_.emplace(g_symbol_names.Append(s), sym).second;
     CHECK(ok);
     return sym;
   }
 
   Symbol Intern(std::string_view s) {
-#ifdef ENABLE_TID_CHECK
-    if (tid_ != pthread_self())
-      abort();
-#endif
-
+    // Other threads only read symbol names.
+    CHECK(std::this_thread::get_id() == main_thread_);
     if (s.size() <= 1) {
       return Symbol(s.empty() ? 0 : (unsigned char)s[0]);
     }
@@ -190,10 +184,7 @@ class Symtab {
 
  private:
   std::unordered_map<std::string_view, Symbol> symtab_;
-  std::vector<std::string*> symbols_;
-#ifdef ENABLE_TID_CHECK
-  pthread_t tid_;
-#endif
+  const std::thread::id main_thread_ = std::this_thread::get_id();
 };
 
 static Symtab g_symtab;
