@@ -162,7 +162,8 @@ class StampChecker {
   })
 
     const std::string& stamp_filename = GetNinjaStampFilename();
-    FILE* fp = fopen(stamp_filename.c_str(), "rb");
+    std::string stamp;
+    FILE* fp = OpenFileInMemory(stamp_filename, &stamp);
     if (!fp) {
       if (g_flags.regen_debug)
         printf("%s: %s\n", stamp_filename.c_str(), strerror(errno));

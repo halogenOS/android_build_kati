@@ -16,6 +16,17 @@
 
 #include "io.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <algorithm>
+#include <atomic>
+#include <thread>
+#include <vector>
+
+#include "affinity.h"
 #include "log.h"
 
 void DumpInt(FILE* fp, int v) {
@@ -46,4 +57,51 @@ bool LoadString(FILE* fp, std::string* s) {
   if (r != s->size())
     return false;
   return true;
+}
+
+FILE* OpenFileInMemory(const std::string& filename, std::string* buf) {
+  int fd = open(filename.c_str(), O_RDONLY | O_CLOEXEC);
+  if (fd < 0)
+    return nullptr;
+  struct stat st;
+  if (fstat(fd, &st) < 0) {
+    close(fd);
+    return nullptr;
+  }
+  if (st.st_size == 0) {
+    // fmemopen does not take an empty buffer.
+    close(fd);
+    return fopen(filename.c_str(), "rb");
+  }
+  buf->resize(st.st_size);
+  const size_t size = buf->size();
+  // A part smaller than a page cannot be read in fewer requests.
+  const size_t page = sysconf(_SC_PAGESIZE);
+  const size_t readers = std::clamp<size_t>(size / page, 1, StartCpuCount());
+  std::atomic<bool> failed = false;
+  std::vector<std::thread> threads;
+  threads.reserve(readers);
+  for (size_t r = 0; r < readers; r++) {
+    threads.emplace_back([fd, buf, size, readers, r, &failed] {
+      size_t pos = size * r / readers;
+      const size_t end = size * (r + 1) / readers;
+      while (pos < end) {
+        ssize_t n = pread(fd, &(*buf)[pos], end - pos, pos);
+        if (n < 0 && errno == EINTR)
+          continue;
+        if (n <= 0) {
+          failed = true;
+          return;
+        }
+        pos += n;
+      }
+    });
+  }
+  for (std::thread& thread : threads) {
+    thread.join();
+  }
+  close(fd);
+  if (failed)
+    return nullptr;
+  return fmemopen(buf->data(), size, "rb");
 }

@@ -26,6 +26,13 @@ void DumpString(FILE* fp, std::string_view s);
 int LoadInt(FILE* fp);
 bool LoadString(FILE* fp, std::string* s);
 
+// Reads the whole file |filename| into |buf| and returns a stream that reads
+// from |buf|, or nullptr when the file cannot be read. |buf| must outlive the
+// stream. Several readers read one part of the file each, all at once: on a
+// network or FUSE file system a single reader waits for one request after
+// another.
+FILE* OpenFileInMemory(const std::string& filename, std::string* buf);
+
 struct ScopedFile {
  public:
   explicit ScopedFile(FILE* fp) : fp_(fp) {}
