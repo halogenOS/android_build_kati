@@ -204,6 +204,28 @@ std::string GetExecutablePath() {
 #endif
 }
 
+// The glibc manual lists glob(3) as "MT-Unsafe race:utent env sig:ALRM timer
+// locale", checked 2026-11-03 at
+// https://sourceware.org/glibc/manual/latest/html_node/Calling-Glob.html
+// In posix/glob.c, the getenv("HOME") lookup (env) and the getlogin_r and
+// getpwnam_r calls (race:utent, sig:ALRM, timer) run only with GLOB_TILDE or
+// GLOB_TILDE_CHECK, not passed here. locale only matters with a concurrent
+// setlocale, which kati never calls. So concurrent calls are safe.
+GlobMap::mapped_type ExpandGlob(const char* pat) {
+  GlobMap::mapped_type files;
+  if (strcspn(pat, "?*[\\") != strlen(pat)) {
+    glob_t gl;
+    glob(pat, 0, NULL, &gl);
+    for (size_t i = 0; i < gl.gl_pathc; i++) {
+      files.push_back(gl.gl_pathv[i]);
+    }
+    globfree(&gl);
+  } else if (Exists(pat)) {
+    files.push_back(pat);
+  }
+  return files;
+}
+
 namespace {
 
 class GlobCache {
@@ -211,21 +233,10 @@ class GlobCache {
   ~GlobCache() { Clear(); }
   const GlobMap::mapped_type& Get(const char* pat) {
     auto [it, inserted] = cache_.try_emplace(pat);
-    auto& files = it->second;
     if (inserted) {
-      if (strcspn(pat, "?*[\\") != strlen(pat)) {
-        glob_t gl;
-        glob(pat, 0, NULL, &gl);
-        for (size_t i = 0; i < gl.gl_pathc; i++) {
-          files.push_back(gl.gl_pathv[i]);
-        }
-        globfree(&gl);
-      } else {
-        if (Exists(pat))
-          files.push_back(pat);
-      }
+      it->second = ExpandGlob(pat);
     }
-    return files;
+    return it->second;
   }
 
   const GlobMap& GetAll() const { return cache_; }

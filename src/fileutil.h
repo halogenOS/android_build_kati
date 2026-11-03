@@ -45,6 +45,10 @@ using GlobMap = std::unordered_map<std::string, std::vector<std::string>>;
 
 const GlobMap::mapped_type& Glob(const char* pat);
 
+// Expands |pat| as Glob does, without the cache, so several threads can call
+// it at the same time.
+GlobMap::mapped_type ExpandGlob(const char* pat);
+
 const GlobMap& GetAllGlobCache();
 
 void ClearGlobCache();

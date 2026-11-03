@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <atomic>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -33,6 +34,7 @@
 #include "ninja.h"
 #include "stats.h"
 #include "strutil.h"
+#include "thread_pool.h"
 
 namespace {
 
@@ -51,11 +53,33 @@ bool ShouldIgnoreDirty(std::string_view s) {
   return pat.Match(s) && !nopat.Match(s);
 }
 
+// Stores |value| in |min| when it is lower than the value already there.
+void StoreMin(std::atomic<size_t>& min, size_t value) {
+  size_t seen = min.load();
+  while (value < seen && !min.compare_exchange_weak(seen, value)) {
+  }
+}
+
 class StampChecker {
   struct GlobResult {
     std::string pat;
     std::vector<std::string> result;
   };
+
+  // What the check of one glob found.
+  enum class GlobStatus { kClean, kIgnored, kDirty };
+
+  static const char* GlobStatusName(GlobStatus status) {
+    switch (status) {
+      case GlobStatus::kClean:
+        return "clean";
+      case GlobStatus::kIgnored:
+        return "ignored";
+      case GlobStatus::kDirty:
+        return "dirty";
+    }
+    __builtin_unreachable();
+  }
 
   struct ShellResult {
     CommandOp op;
@@ -280,9 +304,9 @@ class StampChecker {
     return needs_regen_;
   }
 
-  bool CheckGlobResult(const GlobResult* gr, std::string* err) {
+  GlobStatus CheckGlobResult(const GlobResult* gr) {
     COLLECT_STATS("glob time (regen)");
-    const auto& files = Glob(gr->pat.c_str());
+    const auto files = ExpandGlob(gr->pat.c_str());
     bool needs_regen = files.size() != gr->result.size();
     for (size_t i = 0; i < gr->result.size(); i++) {
       if (!needs_regen) {
@@ -292,62 +316,84 @@ class StampChecker {
         }
       }
     }
-    if (needs_regen) {
-      if (ShouldIgnoreDirty(gr->pat)) {
-        if (g_flags.dump_kati_stamp) {
-          printf("wildcard %s: ignored\n", gr->pat.c_str());
-        }
-        return false;
-      }
-      if (g_flags.dump_kati_stamp) {
-        printf("wildcard %s: dirty\n", gr->pat.c_str());
-      } else {
-        *err = StringPrintf("wildcard(%s) was changed, regenerating...\n",
-                            gr->pat.c_str());
-      }
-    } else if (g_flags.dump_kati_stamp) {
-      printf("wildcard %s: clean\n", gr->pat.c_str());
-    }
-    return needs_regen;
+    if (!needs_regen)
+      return GlobStatus::kClean;
+    if (ShouldIgnoreDirty(gr->pat))
+      return GlobStatus::kIgnored;
+    return GlobStatus::kDirty;
   }
 
-  bool ShouldRunCommand(const ShellResult* sr) {
+  bool ShouldRunCommand(const ShellResult* sr, ThreadPool& stat_workers) {
     if (sr->op != CommandOp::FIND)
       return true;
 
     COLLECT_STATS("stat time (regen)");
-    for (const std::string& dir : sr->missing_dirs) {
-      if (Exists(dir))
-        return true;
-    }
-    for (const std::string& file : sr->files) {
-      if (!Exists(file))
-        return true;
-    }
-    for (const std::string& dir : sr->read_dirs) {
-      // We assume we rarely do a significant change for the top
-      // directory which affects the results of find command.
-      if (dir == "" || dir == "." || ShouldIgnoreDirty(dir))
-        continue;
+    return AnyOf(stat_workers, sr->missing_dirs,
+                 [](const std::string& dir) { return Exists(dir); }) ||
+           AnyOf(stat_workers, sr->files,
+                 [](const std::string& file) { return !Exists(file); }) ||
+           AnyOf(stat_workers, sr->read_dirs, [this](const std::string& dir) {
+             return ReadDirChanged(dir);
+           });
+  }
 
-      struct stat st;
-      if (lstat(dir.c_str(), &st) != 0) {
+  // Whether the directory |dir|, read by a find command, may list other names
+  // than when the stamp was generated.
+  bool ReadDirChanged(const std::string& dir) const {
+    // We assume a significant change to the top directory rarely changes the
+    // results returned by a find command.
+    if (dir == "" || dir == "." || ShouldIgnoreDirty(dir))
+      return false;
+
+    struct stat st;
+    if (lstat(dir.c_str(), &st) != 0) {
+      return true;
+    }
+    double ts = GetTimestampFromStat(st);
+    if (gen_time_ < ts) {
+      return true;
+    }
+    if (S_ISLNK(st.st_mode)) {
+      ts = GetTimestamp(dir);
+      if (ts < 0 || gen_time_ < ts)
         return true;
-      }
-      double ts = GetTimestampFromStat(st);
-      if (gen_time_ < ts) {
-        return true;
-      }
-      if (S_ISLNK(st.st_mode)) {
-        ts = GetTimestamp(dir);
-        if (ts < 0 || gen_time_ < ts)
-          return true;
-      }
     }
     return false;
   }
 
-  bool CheckShellResult(const ShellResult* sr, std::string* err) {
+  // Returns true when |changed| returns true for any of |names|. The calls run
+  // on the threads of |workers|, as each one waits for the file system, and
+  // each thread takes the next name not taken yet. After the first true
+  // result, the calls not started yet are skipped.
+  template <typename Changed>
+  static bool AnyOf(ThreadPool& workers,
+                    const std::vector<std::string>& names,
+                    Changed changed) {
+    std::atomic<size_t> next = 0;
+    std::atomic<bool> found = false;
+    const size_t task_count = std::min(workers.ThreadCount(), names.size());
+    std::vector<std::future<void>> tasks;
+    tasks.reserve(task_count);
+    for (size_t i = 0; i < task_count; i++) {
+      tasks.push_back(workers.Run([&next, &found, &names, &changed] {
+        while (!found.load()) {
+          const size_t taken = next.fetch_add(1);
+          if (taken >= names.size())
+            return;
+          if (changed(names[taken]))
+            found.store(true);
+        }
+      }));
+    }
+    for (std::future<void>& task : tasks) {
+      task.wait();
+    }
+    return found.load();
+  }
+
+  bool CheckShellResult(const ShellResult* sr,
+                        ThreadPool& stat_workers,
+                        std::string* err) {
     if (sr->op == CommandOp::READ_MISSING) {
       if (Exists(sr->cmd)) {
         if (g_flags.dump_kati_stamp)
@@ -411,7 +457,7 @@ class StampChecker {
       return false;
     }
 
-    if (!ShouldRunCommand(sr)) {
+    if (!ShouldRunCommand(sr, stat_workers)) {
       if (g_flags.regen_debug)
         printf("shell %s: clean (no rerun)\n", sr->cmd.c_str());
       return false;
@@ -444,33 +490,70 @@ class StampChecker {
     return false;
   }
 
-  bool CheckStep2() {
-    auto glob_future = std::async([this]() {
-      std::string err;
-      // TODO: Make glob cache thread safe and create a task for each glob.
-      SetAffinityForSingleThread();
-      for (GlobResult* gr : globs_) {
-        if (CheckGlobResult(gr, &err)) {
-          std::unique_lock<std::mutex> lock(mu_);
-          if (!needs_regen_) {
-            needs_regen_ = true;
-            msg_ = err;
-          }
-          break;
-        }
-      }
-    });
+  // Checks the globs on the threads of |workers|, as each one reads a directory
+  // and waits for the file system. A changed glob skips the globs after it not
+  // started yet, so every glob up to the first changed one is checked, and the
+  // result is the same as when they are checked one after another.
+  void CheckGlobs(ThreadPool& workers) {
+    std::atomic<size_t> first_changed = globs_.size();
+    std::vector<GlobStatus> statuses(globs_.size());
+    std::vector<std::future<void>> checks;
+    checks.reserve(globs_.size());
+    for (size_t i = 0; i < globs_.size(); i++) {
+      checks.push_back(workers.Run([this, i, &first_changed, &statuses] {
+        if (first_changed.load() < i)
+          return;
+        statuses[i] = CheckGlobResult(globs_[i]);
+        if (statuses[i] == GlobStatus::kDirty)
+          StoreMin(first_changed, i);
+      }));
+    }
+    for (std::future<void>& check : checks) {
+      check.wait();
+    }
 
-    auto shell_future = std::async([this]() {
+    const size_t first = first_changed.load();
+    const bool changed = first < globs_.size();
+    const size_t checked_count = changed ? first + 1 : globs_.size();
+    if (g_flags.dump_kati_stamp) {
+      for (size_t i = 0; i < checked_count; i++) {
+        printf("wildcard %s: %s\n", globs_[i]->pat.c_str(),
+               GlobStatusName(statuses[i]));
+      }
+    }
+    if (changed) {
+      MarkNeedsRegen(g_flags.dump_kati_stamp
+                         ? ""
+                         : StringPrintf("wildcard(%s) was changed, "
+                                        "regenerating...\n",
+                                        globs_[first]->pat.c_str()));
+    }
+  }
+
+  // Sets the message of the first check that found a change.
+  void MarkNeedsRegen(const std::string& err) {
+    std::unique_lock<std::mutex> lock(mu_);
+    if (!needs_regen_) {
+      needs_regen_ = true;
+      msg_ = err;
+    }
+  }
+
+  bool CheckStep2() {
+    // The checks of the find commands get their own threads, so they do not
+    // wait behind the globs.
+    ThreadPool glob_workers(StartCpuCount(), SetStartAffinity);
+    ThreadPool stat_workers(StartCpuCount(), SetStartAffinity);
+
+    auto glob_future =
+        std::async([this, &glob_workers]() { CheckGlobs(glob_workers); });
+
+    auto shell_future = std::async([this, &stat_workers]() {
       SetAffinityForSingleThread();
       for (ShellResult* sr : commands_) {
         std::string err;
-        if (CheckShellResult(sr, &err)) {
-          std::unique_lock<std::mutex> lock(mu_);
-          if (!needs_regen_) {
-            needs_regen_ = true;
-            msg_ = err;
-          }
+        if (CheckShellResult(sr, stat_workers, &err)) {
+          MarkNeedsRegen(err);
         }
       }
     });

@@ -29,6 +29,9 @@ class ThreadPool {
   // Queues |task|. The future is ready once a thread has run it.
   std::future<void> Run(std::function<void()> task);
 
+  // The number of threads started.
+  size_t ThreadCount() const { return threads_.size(); }
+
   // Whether a task waits for a thread to take it.
   bool HasQueuedTasks();
 
