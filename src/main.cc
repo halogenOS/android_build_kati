@@ -407,5 +407,7 @@ int main(int argc, char* argv[]) {
     InitFindEmulator();
   int r = Run(g_flags.targets, g_flags.cl_vars, orig_args);
   ReportAllStats();
-  return r;
+  // Every file Kati writes is closed and renamed by now, and freeing the heap
+  // would take seconds.
+  ExitKati(r);
 }

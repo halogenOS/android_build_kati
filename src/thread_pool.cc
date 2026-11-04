@@ -38,15 +38,12 @@ ThreadPool::~ThreadPool() {
     thread.join();
 }
 
-std::future<void> ThreadPool::Run(std::function<void()> task) {
-  std::packaged_task<void()> queued(std::move(task));
-  std::future<void> done = queued.get_future();
+void ThreadPool::Queue(std::packaged_task<void()> task) {
   {
     std::lock_guard<std::mutex> lock(mu_);
-    tasks_.push_back(std::move(queued));
+    tasks_.push_back(std::move(task));
   }
   task_cv_.notify_one();
-  return done;
 }
 
 bool ThreadPool::HasQueuedTasks() {

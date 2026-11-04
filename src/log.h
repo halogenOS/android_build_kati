@@ -53,10 +53,15 @@ extern std::string* g_last_error;
             strerror(errno));                                      \
   } while (0)
 
+// Flushes stdout and ends Kati with |status|, or with 1 when the flush fails.
+// The static destructors do not run, as worker threads may still read what
+// they free. Work that must happen at the end registers with at_quick_exit().
+[[noreturn]] void ExitKati(int status);
+
 #define PERROR(...)    \
   do {                 \
     PLOG(__VA_ARGS__); \
-    exit(1);           \
+    ExitKati(1);       \
   } while (0)
 
 #define WARN(...)                                               \
@@ -74,7 +79,7 @@ extern std::string* g_last_error;
   do {                                                            \
     if (!g_log_no_exit) {                                         \
       fprintf(stderr, "%s\n", StringPrintf(__VA_ARGS__).c_str()); \
-      exit(1);                                                    \
+      ExitKati(1);                                                \
     }                                                             \
     g_last_error = new std::string(StringPrintf(__VA_ARGS__));    \
   } while (0)

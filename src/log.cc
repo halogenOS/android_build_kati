@@ -58,5 +58,13 @@ void ColorWarnLog(const char* file, int line, const char* msg) {
   }
 }
 
+void ExitKati(int status) {
+  if (fflush(stdout) != 0) {
+    PLOG("fflush(stdout)");
+    quick_exit(1);
+  }
+  quick_exit(status);
+}
+
 bool g_log_no_exit;
 std::string* g_last_error;

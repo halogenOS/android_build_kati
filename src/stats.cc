@@ -24,6 +24,7 @@
 #include "flags.h"
 #include "log.h"
 #include "stringprintf.h"
+#include "symtab.h"
 #include "timeutil.h"
 
 namespace {
@@ -133,13 +134,14 @@ ScopedStatsRecorder::~ScopedStatsRecorder() {
 }
 
 void ReportAllStats() {
-  if (!g_stats)
-    return;
-  for (Stats* st : *g_stats) {
-    LOG_STAT("%s", st->String().c_str());
-    st->DumpTop();
+  if (g_stats) {
+    for (Stats* st : *g_stats) {
+      LOG_STAT("%s", st->String().c_str());
+      st->DumpTop();
+    }
+    delete g_stats;
   }
-  delete g_stats;
 
   LOG_STAT("%u find nodes", FindEmulator::GetNodeCount());
+  LOG_STAT("%zu symbols", g_symbol_names.size());
 }

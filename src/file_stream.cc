@@ -108,13 +108,16 @@ class FileStream {
   FILE* fp_;
 };
 
-// Destroyed at exit, so a run that stops with an error removes the temporary
-// files of the streams it has not finished.
+// Cleared when Kati ends, so a run that stops with an error removes the
+// temporary files of the streams it has not finished.
 std::unordered_map<std::string, FileStream> g_file_streams;
 
 }  // namespace
 
 bool StartFileStream(Evaluator* ev, const std::string& path) {
+  static const bool cleared_at_exit =
+      at_quick_exit([] { g_file_streams.clear(); }) == 0;
+  CHECK(cleared_at_exit);
   auto [it, started] = g_file_streams.try_emplace(path, path);
   if (started) {
     std::string error = it->second.OpenError();

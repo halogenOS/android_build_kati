@@ -10,6 +10,7 @@
 #include <future>
 #include <mutex>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 // Threads that run queued tasks in the order they were queued.
@@ -26,8 +27,15 @@ class ThreadPool {
   ThreadPool(const ThreadPool&) = delete;
   ThreadPool& operator=(const ThreadPool&) = delete;
 
-  // Queues |task|. The future is ready once a thread has run it.
-  std::future<void> Run(std::function<void()> task);
+  // Queues |task|. The future is ready with what |task| returns once a thread
+  // has run it.
+  template <typename Task>
+  std::future<std::invoke_result_t<Task>> Run(Task task) {
+    std::packaged_task<std::invoke_result_t<Task>()> run(std::move(task));
+    std::future<std::invoke_result_t<Task>> done = run.get_future();
+    Queue(std::packaged_task<void()>(std::move(run)));
+    return done;
+  }
 
   // The number of threads started.
   size_t ThreadCount() const { return threads_.size(); }
@@ -36,6 +44,7 @@ class ThreadPool {
   bool HasQueuedTasks();
 
  private:
+  void Queue(std::packaged_task<void()> task);
   void Work();
 
   std::mutex mu_;

@@ -143,8 +143,6 @@ class Symtab {
                                  false, nullptr);
   }
 
-  ~Symtab() { LOG_STAT("%zu symbols", g_symbol_names.size()); }
-
   Symbol InternImpl(std::string_view s) {
     auto found = symtab_.find(s);
     if (found != symtab_.end()) {
