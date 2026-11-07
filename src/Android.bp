@@ -120,3 +120,12 @@ cc_test_host {
     ],
     static_libs: ["libckati"],
 }
+
+cc_test_host {
+    name: "ckati_symtab_bench",
+    defaults: ["ckati_defaults"],
+    srcs: [
+        "symtab_bench.cc",
+    ],
+    static_libs: ["libckati"],
+}
