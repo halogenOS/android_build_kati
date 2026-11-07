@@ -21,8 +21,6 @@
 #include "log.h"
 #include "strutil.h"
 
-std::unordered_map<const Var*, std::string> Var::diagnostic_messages_;
-
 const char* GetOriginStr(VarOrigin origin) {
   switch (origin) {
     case VarOrigin::UNDEFINED:
@@ -57,9 +55,7 @@ Var::Var(VarOrigin origin, Frame* definition, Loc loc)
       obsolete_(false),
       self_referential_(false) {}
 
-Var::~Var() {
-  diagnostic_messages_.erase(this);
-}
+Var::~Var() = default;
 
 void Var::AppendVar(Evaluator*, Value*) {
   CHECK(false);
@@ -67,12 +63,12 @@ void Var::AppendVar(Evaluator*, Value*) {
 
 void Var::SetDeprecated(const std::string_view& msg) {
   deprecated_ = true;
-  diagnostic_messages_[this] = std::string(msg);
+  diagnostic_message_ = std::make_unique<std::string>(msg);
 }
 
 void Var::SetObsolete(const std::string_view& msg) {
   obsolete_ = true;
-  diagnostic_messages_[this] = std::string(msg);
+  diagnostic_message_ = std::make_unique<std::string>(msg);
 }
 
 void Var::Used(Evaluator* ev, const Symbol& sym) const {
@@ -121,14 +117,12 @@ void Var::CheckCurrentReferencingFile(Loc loc, const char* name) {
 }
 
 const char* Var::diagnostic_message_text() const {
-  auto it = diagnostic_messages_.find(this);
-  return it == diagnostic_messages_.end() ? "" : it->second.c_str();
+  return diagnostic_message_ ? diagnostic_message_->c_str() : "";
 }
 
 const std::string& Var::DeprecatedMessage() const {
   static const std::string empty_string;
-  auto it = diagnostic_messages_.find(this);
-  return it == diagnostic_messages_.end() ? empty_string : it->second;
+  return diagnostic_message_ ? *diagnostic_message_ : empty_string;
 }
 
 Var* Var::Undefined() {

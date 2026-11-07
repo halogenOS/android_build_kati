@@ -107,7 +107,7 @@ class Var : public Evaluable {
 
   const char* diagnostic_message_text() const;
 
-  static std::unordered_map<const Var*, std::string> diagnostic_messages_;
+  std::unique_ptr<std::string> diagnostic_message_;
 
   std::vector<std::string> visibility_prefix_;
 };
