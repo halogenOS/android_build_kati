@@ -16,10 +16,13 @@
 
 #include "symtab.h"
 
+#include <stdint.h>
 #include <string.h>
 
+#include <limits>
+#include <ratio>
 #include <thread>
-#include <unordered_map>
+#include <utility>
 
 #include "log.h"
 #include "strutil.h"
@@ -102,18 +105,90 @@ ScopedGlobalVar::~ScopedGlobalVar() {
   g_symbol_data[name_.val()].gv = orig_;
 }
 
-const std::string& SymbolNames::Append(std::string_view name) {
+void SymbolNames::Append(std::string_view name) {
   const int segment = SegmentOf(size_);
   std::string* names = segments_[segment].load(std::memory_order_relaxed);
   if (!names) {
     names = new std::string[size_t{1} << segment];
     segments_[segment].store(names, std::memory_order_release);
   }
-  std::string& slot = names[size_ - SegmentStart(segment)];
-  slot = name;
+  names[size_ - SegmentStart(segment)] = name;
   size_++;
-  return slot;
 }
+
+// Maps each interned name to its Symbol by open addressing over a
+// power-of-two number of slots.
+class SymbolTable {
+ public:
+  // Returns the Symbol of |name|. For a new name, |add_name| appends it to
+  // g_symbol_names and returns its Symbol.
+  template <typename AddName>
+  Symbol FindOrInsert(std::string_view name, AddName add_name) {
+    const uint32_t hash =
+        static_cast<uint32_t>(std::hash<std::string_view>()(name));
+    Slot* slot = &Probe(hash, [&](const Slot& taken) {
+      return taken.hash == hash && taken.sym.str() == name;
+    });
+    if (slot->sym.IsValid()) {
+      return slot->sym;
+    }
+    if ((count_ + 1) * MaxLoad::den > slots_.size() * MaxLoad::num) {
+      Grow();
+      slot = &FindEmptySlot(hash);
+    }
+    const Symbol sym = add_name();
+    *slot = {hash, sym};
+    count_++;
+    return sym;
+  }
+
+ private:
+  // The table grows before a larger share of its slots is taken. A 64-byte
+  // cache line holds 8 slots, so the probe for a known name, about 4.5 slots
+  // long at this fill, mostly stays within one line.
+  using MaxLoad = std::ratio<7, 8>;
+
+  // An empty slot holds the invalid default Symbol. Each taken slot keeps the
+  // low 32 bits of the hash of its name, which also place it in the table, so
+  // a probe reads the name from g_symbol_names only on a hash match.
+  // Symtab::SymbolAt CHECKs that every Symbol value fits in int, so the table
+  // holds at most 2^31 names and never needs more than the 2^32 slots that a
+  // 32-bit hash reaches.
+  struct Slot {
+    uint32_t hash;
+    Symbol sym;
+  };
+
+  // Returns the first slot from the home slot of |hash| on that is empty or
+  // that |matches|.
+  template <typename Matches>
+  Slot& Probe(uint32_t hash, Matches matches) {
+    const size_t mask = slots_.size() - 1;
+    for (size_t i = hash & mask;; i = (i + 1) & mask) {
+      Slot& slot = slots_[i];
+      if (!slot.sym.IsValid() || matches(slot)) {
+        return slot;
+      }
+    }
+  }
+
+  Slot& FindEmptySlot(uint32_t hash) {
+    return Probe(hash, [](const Slot&) { return false; });
+  }
+
+  void Grow() {
+    const std::vector<Slot> previous =
+        std::exchange(slots_, std::vector<Slot>(slots_.size() * 2));
+    for (const Slot& slot : previous) {
+      if (slot.sym.IsValid()) {
+        FindEmptySlot(slot.hash) = slot;
+      }
+    }
+  }
+
+  std::vector<Slot> slots_ = std::vector<Slot>(1);
+  size_t count_ = 0;
+};
 
 class Symtab {
  public:
@@ -144,14 +219,11 @@ class Symtab {
   }
 
   Symbol InternImpl(std::string_view s) {
-    auto found = symtab_.find(s);
-    if (found != symtab_.end()) {
-      return found->second;
-    }
-    Symbol sym = Symbol(symtab_.size());
-    bool ok = symtab_.emplace(g_symbol_names.Append(s), sym).second;
-    CHECK(ok);
-    return sym;
+    return table_.FindOrInsert(s, [s] {
+      const Symbol sym = SymbolAt(g_symbol_names.size());
+      g_symbol_names.Append(s);
+      return sym;
+    });
   }
 
   Symbol Intern(std::string_view s) {
@@ -166,22 +238,27 @@ class Symtab {
   std::vector<std::string_view> GetSymbolNames(
       std::function<bool(Var*)> const& filter) {
     std::vector<std::string_view> result;
-    for (auto entry : symtab_) {
-      Var* var = entry.second.PeekGlobalVar();
+    for (size_t i = 0; i < g_symbol_names.size(); i++) {
+      Var* var = SymbolAt(i).PeekGlobalVar();
       // The symbol table contains all interned strings, not just variables
       // which have been defined.
       if (!var->IsDefined()) {
         continue;
       }
       if (filter(var)) {
-        result.push_back(entry.first);
+        result.push_back(g_symbol_names[i]);
       }
     }
     return result;
   }
 
  private:
-  std::unordered_map<std::string_view, Symbol> symtab_;
+  static Symbol SymbolAt(size_t index) {
+    CHECK(index <= static_cast<size_t>(std::numeric_limits<int>::max()));
+    return Symbol(static_cast<int>(index));
+  }
+
+  SymbolTable table_;
   const std::thread::id main_thread_ = std::this_thread::get_id();
 };
 

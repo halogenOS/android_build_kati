@@ -36,7 +36,7 @@ class SymbolNames {
   }
 
   // Only the thread that calls Intern() appends.
-  const std::string& Append(std::string_view name);
+  void Append(std::string_view name);
 
   size_t size() const { return size_; }
 
