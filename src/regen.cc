@@ -53,6 +53,21 @@ bool ShouldIgnoreDirty(std::string_view s) {
   return pat.Match(s) && !nopat.Match(s);
 }
 
+// Whether |a| and |b| contain the same words, in any order. A find command
+// prints names in the order of the directory, and rewriting a file can move
+// its name there while the set of names is unchanged.
+bool HasSameWords(std::string_view a, std::string_view b) {
+  std::vector<std::string_view> words_of_a;
+  std::vector<std::string_view> words_of_b;
+  WordScanner(a).Split(&words_of_a);
+  WordScanner(b).Split(&words_of_b);
+  if (words_of_a.size() != words_of_b.size())
+    return false;
+  std::sort(words_of_a.begin(), words_of_a.end());
+  std::sort(words_of_b.begin(), words_of_b.end());
+  return words_of_a == words_of_b;
+}
+
 // Stores |value| in |min| when it is lower than the value already there.
 void StoreMin(std::atomic<size_t>& min, size_t value) {
   size_t seen = min.load();
@@ -476,7 +491,8 @@ class StampChecker {
     RunCommand(sr->shell, sr->shellflag, sr->cmd, RedirectStderr::DEV_NULL,
                &result);
     FormatForCommandSubstitution(&result);
-    if (sr->result != result) {
+    if (sr->result != result && !(sr->op == CommandOp::FIND &&
+                                  HasSameWords(sr->result, result))) {
       if (g_flags.dump_kati_stamp) {
         printf("shell %s: dirty\n", sr->cmd.c_str());
       } else {
